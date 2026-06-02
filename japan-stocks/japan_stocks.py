@@ -231,7 +231,25 @@ def screen(stocks: list[dict], n: int = 10) -> dict:
     nisa_ai     = sorted(nisa_ai,     key=lambda x: x["momentum_score"],                    reverse=True)[:n]
     tokutei_mom = sorted(tokutei_mom, key=lambda x: x["momentum_score"],                    reverse=True)[:n]
 
-    return {"nisa_dip": nisa_dip, "nisa_ai": nisa_ai, "tokutei_mom": tokutei_mom}
+    # Top 20 dividend stocks: yield >= 1.5%, P/E < 30, RSI < 65
+    # Score: yield * 2 + fund_score + dip bonus (good entry) + growth bonus (positive 20d return)
+    dividends = [
+        s for s in stocks
+        if s["div_yield"] >= 1.5
+        and (s["pe"] is None or s["pe"] < 30)
+        and s["rsi"] < 65
+    ]
+    def div_score(s: dict) -> float:
+        return (
+            s["div_yield"] * 2.0
+            + s["fund_score"] * 1.5
+            + (3.0 if s["rsi"] < 45 else 1.5 if s["rsi"] < 55 else 0.0)  # dip bonus
+            + (2.0 if s["ret20"] > 5 else 1.0 if s["ret20"] > 0 else 0.0)  # growth bonus
+            + (1.0 if s["div_yield"] > 3 else 0.0)                          # high yield bonus
+        )
+    dividends = sorted(dividends, key=div_score, reverse=True)[:20]
+
+    return {"nisa_dip": nisa_dip, "nisa_ai": nisa_ai, "tokutei_mom": tokutei_mom, "dividends": dividends}
 
 
 # ── Report helpers ────────────────────────────────────────────────────────────
@@ -296,6 +314,53 @@ def print_section(title: str, label: str, stocks: list[dict]) -> None:
         print(f"     Entry: {entry}  Target: {target}  Stop: {stop}")
 
 
+def print_dividend_section(stocks: list[dict]) -> None:
+    W = 100
+    print(f"\n{'='*W}")
+    print("  TOP 20 DIVIDEND STOCKS  [Quality + Growth Potential]")
+    print(f"  Criteria: Yield >= 1.5%  |  P/E < 30  |  RSI < 65  |  Ranked by yield + quality + dip entry")
+    print(f"{'='*W}")
+    if not stocks:
+        print("  No qualifying dividend stocks today.")
+        return
+
+    hdr = (f"{'#':<3} {'Stock':<26} {'Code':<8} {'Price':>9} {'Div Yield':>10} "
+           f"{'RSI':>5} {'P/E':>7} {'5d':>6} {'20d':>6}  {'Drawdown':>9}  {'Data Pulled (JST)':<20}")
+    print(f"\n{hdr}")
+    print("-" * W)
+
+    for i, s in enumerate(stocks, 1):
+        ai_tag = "[AI]" if s["is_ai"] else "    "
+        name   = s["name"][:25].ljust(26)
+        print(
+            f"{i:<3} {ai_tag} {name:<26} {s['ticker']:<8} "
+            f"{fmt_price(s['price']):>9} {fmt_div(s['div_yield']):>10} "
+            f"{s['rsi']:>5.1f} {fmt_pe(s['pe']):>7} "
+            f"{fmt_pct(s['ret5']):>6} {fmt_pct(s['ret20']):>6}  "
+            f"{fmt_pct(s['drawdown']):>9}  {s['fetched_at']:<20}"
+        )
+
+    print(f"\n{'-'*W}")
+    print("  DETAIL")
+    print(f"{'-'*W}")
+
+    for i, s in enumerate(stocks, 1):
+        spread = s["resistance"] - s["support"]
+        entry  = fmt_price(s["price"] * 0.999)
+        target = fmt_price(s["price"] + spread * 0.4)
+        stop   = fmt_price(s["support"])
+        a20    = "(above)" if s["price"] > s["ema20"] else "(below)"
+        a50    = "(above)" if s["price"] > s["ema50"] else "(below)"
+        ai_tag = " [AI]" if s["is_ai"] else ""
+        growth = ("Growing" if s["ret20"] > 5 else "Stable" if s["ret20"] > 0 else "Under pressure")
+        print(f"\n  {i}. {s['name']}{ai_tag} ({s['ticker']})  |  {s['sector']}  |  Cap: {s['mkt_cap']}  |  Trend: {growth}")
+        print(f"     Price: {fmt_price(s['price'])}  Div: {fmt_div(s['div_yield'])}  P/E: {fmt_pe(s['pe'])}  RSI: {s['rsi']:.1f}")
+        print(f"     5d: {fmt_pct(s['ret5'])}  20d: {fmt_pct(s['ret20'])}  Drawdown: {fmt_pct(s['drawdown'])}")
+        print(f"     EMA20: {fmt_price(s['ema20'])} {a20}  |  EMA50: {fmt_price(s['ema50'])} {a50}")
+        print(f"     Support: {fmt_price(s['support'])}  Resistance: {fmt_price(s['resistance'])}")
+        print(f"     Entry: {entry}  Target: {target}  Stop: {stop}")
+
+
 def print_report(results: dict) -> None:
     today = datetime.now().strftime("%B %d, %Y  %H:%M JST")
     W = 100
@@ -317,6 +382,8 @@ def print_report(results: dict) -> None:
         "TOKUTEI -- Short-term Momentum + Recovery Plays  [Loss offset / active trading]",
         "TOKUTEI", results["tokutei_mom"]
     )
+
+    print_dividend_section(results["dividends"])
 
     # Top 5 overall
     seen    = set()
