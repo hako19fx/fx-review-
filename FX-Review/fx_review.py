@@ -1,8 +1,25 @@
 import sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import yfinance as yf
+
+
+def get_fx_live_price(ticker: str, last_close: float) -> tuple[float, str]:
+    """Fetch latest 5-min intraday bar for FX (24/5 market).
+    Falls back to last daily close on weekends or on error."""
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.weekday() >= 5:          # weekend — forex closed
+        return last_close, "CLOSE"
+    try:
+        df5 = yf.Ticker(ticker).history(period="1d", interval="5m", auto_adjust=True)
+        if not df5.empty:
+            p = float(df5["Close"].iloc[-1])
+            if p > 0:
+                return p, "LIVE"
+    except Exception:
+        pass
+    return last_close, "CLOSE"
 
 PAIRS = {
     "EUR/USD": "EURUSD=X",
@@ -41,15 +58,10 @@ def carry_positive(pair_name: str, bias: str) -> tuple[bool, float]:
     return diff > 0, diff
 
 
-def fetch_data(ticker: str) -> tuple[pd.DataFrame, str, float | None]:
+def fetch_data(ticker: str) -> tuple[pd.DataFrame, str]:
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M JST")
     df = yf.download(ticker, period="60d", interval="1d", progress=False, auto_adjust=True)
-    try:
-        live = float(yf.Ticker(ticker).fast_info.last_price)
-        live_price = live if live and live > 0 else None
-    except Exception:
-        live_price = None
-    return df, fetched_at, live_price
+    return df, fetched_at
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -61,7 +73,7 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
 
 
 def analyze(pair_name: str, ticker: str) -> dict | None:
-    df, fetched_at, live_price = fetch_data(ticker)
+    df, fetched_at = fetch_data(ticker)
     if df.empty or len(df) < 20:
         return None
 
@@ -73,8 +85,8 @@ def analyze(pair_name: str, ticker: str) -> dict | None:
     ema50 = close.ewm(span=50, adjust=False).mean()
     rsi = compute_rsi(close)
 
-    current = live_price if live_price else float(close.iloc[-1])
-    price_label = "LIVE" if live_price else "CLOSE"
+    last_close = float(close.iloc[-1])
+    current, price_label = get_fx_live_price(ticker, last_close)
     rsi_val = float(rsi.iloc[-1])
     ema20_val = float(ema20.iloc[-1])
     ema50_val = float(ema50.iloc[-1])

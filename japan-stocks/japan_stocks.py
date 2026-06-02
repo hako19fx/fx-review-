@@ -1,8 +1,35 @@
 import sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import yfinance as yf
+
+JST = timezone(timedelta(hours=9))
+
+
+def is_tse_open() -> bool:
+    now = datetime.now(JST)
+    h, m, wd = now.hour, now.minute, now.weekday()
+    if wd >= 5:  # weekend
+        return False
+    morning   = (h == 9) or (h == 10) or (h == 11 and m <= 30)
+    afternoon = (h == 12 and m >= 30) or (h == 13) or (h == 14) or (h == 15 and m <= 30)
+    return morning or afternoon
+
+
+def get_live_price(tk: yf.Ticker, last_close: float) -> tuple[float, str]:
+    """Return (price, label). Fetches 5-min intraday bar during TSE hours,
+    otherwise returns the last official daily close."""
+    if is_tse_open():
+        try:
+            df5 = tk.history(period="1d", interval="5m", auto_adjust=True)
+            if not df5.empty:
+                p = float(df5["Close"].iloc[-1])
+                if p > 0:
+                    return p, "LIVE"
+        except Exception:
+            pass
+    return last_close, "CLOSE"
 
 # ── Stock Universe ────────────────────────────────────────────────────────────
 
@@ -128,14 +155,8 @@ def fetch_stock(name: str, ticker: str) -> dict | None:
         ema5  = close.ewm(span=5,  adjust=False).mean()
         rsi   = compute_rsi(close)
 
-        # Use live price if available (real-time during TSE hours), else last close
-        try:
-            live = float(tk.fast_info.last_price)
-            current = live if live and live > 0 else float(close.iloc[-1])
-            price_label = "LIVE"
-        except Exception:
-            current = float(close.iloc[-1])
-            price_label = "CLOSE"
+        last_close = float(close.iloc[-1])
+        current, price_label = get_live_price(tk, last_close)
         rsi_val    = float(rsi.iloc[-1])
         ema5_val   = float(ema5.iloc[-1])
         ema20_val  = float(ema20.iloc[-1])
