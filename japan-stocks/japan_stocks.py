@@ -128,7 +128,14 @@ def fetch_stock(name: str, ticker: str) -> dict | None:
         ema5  = close.ewm(span=5,  adjust=False).mean()
         rsi   = compute_rsi(close)
 
-        current    = float(close.iloc[-1])
+        # Use live price if available (real-time during TSE hours), else last close
+        try:
+            live = float(tk.fast_info.last_price)
+            current = live if live and live > 0 else float(close.iloc[-1])
+            price_label = "LIVE"
+        except Exception:
+            current = float(close.iloc[-1])
+            price_label = "CLOSE"
         rsi_val    = float(rsi.iloc[-1])
         ema5_val   = float(ema5.iloc[-1])
         ema20_val  = float(ema20.iloc[-1])
@@ -179,6 +186,7 @@ def fetch_stock(name: str, ticker: str) -> dict | None:
             "name":           name,
             "ticker":         ticker,
             "price":          current,
+            "price_label":    price_label,
             "rsi":            rsi_val,
             "ema5":           ema5_val,
             "ema20":          ema20_val,
@@ -277,7 +285,7 @@ def print_section(title: str, label: str, stocks: list[dict]) -> None:
         print("  No qualifying stocks today.")
         return
 
-    hdr = (f"{'#':<3} {'Stock':<26} {'Code':<8} {'Price':>9} {'RSI':>5} "
+    hdr = (f"{'#':<3} {'Stock':<26} {'Code':<8} {'Price':>9} {'Px':>5} {'RSI':>5} "
            f"{'5d':>6} {'P/E':>7} {'Div':>6}  {'Drawdown':>9}  {'Data Pulled (JST)':<20}")
     print(f"\n{hdr}")
     print("-" * W)
@@ -287,7 +295,7 @@ def print_section(title: str, label: str, stocks: list[dict]) -> None:
         name   = (s["name"][:25]).ljust(26)
         print(
             f"{i:<3} {ai_tag}{name[5:] if s['is_ai'] else name:<26} {s['ticker']:<8} "
-            f"{fmt_price(s['price']):>9} {s['rsi']:>5.1f} "
+            f"{fmt_price(s['price']):>9} {s.get('price_label','—'):>5} {s['rsi']:>5.1f} "
             f"{fmt_pct(s['ret5']):>6} {fmt_pe(s['pe']):>7} {fmt_div(s['div_yield']):>6}  "
             f"{fmt_pct(s['drawdown']):>9}  {s['fetched_at']:<20}"
         )
@@ -305,7 +313,7 @@ def print_section(title: str, label: str, stocks: list[dict]) -> None:
         a20     = "(above)" if s["price"] > s["ema20"] else "(below)"
         a50     = "(above)" if s["price"] > s["ema50"] else "(below)"
         print(f"\n  {i}. {s['name']}{ai_tag} ({s['ticker']})  [{label}]  |  {s['sector']}  |  Cap: {s['mkt_cap']}")
-        print(f"     Price: {fmt_price(s['price'])}  RSI: {s['rsi']:.1f}  "
+        print(f"     Price: {fmt_price(s['price'])} [{s.get('price_label','—')}]  RSI: {s['rsi']:.1f}  "
               f"5d: {fmt_pct(s['ret5'])}  20d: {fmt_pct(s['ret20'])}  "
               f"Drawdown from 90d-high: {fmt_pct(s['drawdown'])}")
         print(f"     EMA20: {fmt_price(s['ema20'])} {a20}  |  EMA50: {fmt_price(s['ema50'])} {a50}")
@@ -324,7 +332,7 @@ def print_dividend_section(stocks: list[dict]) -> None:
         print("  No qualifying dividend stocks today.")
         return
 
-    hdr = (f"{'#':<3} {'Stock':<26} {'Code':<8} {'Price':>9} {'Div Yield':>10} "
+    hdr = (f"{'#':<3} {'Stock':<26} {'Code':<8} {'Price':>9} {'Px':>5} {'Div Yield':>10} "
            f"{'RSI':>5} {'P/E':>7} {'5d':>6} {'20d':>6}  {'Drawdown':>9}  {'Data Pulled (JST)':<20}")
     print(f"\n{hdr}")
     print("-" * W)
@@ -334,7 +342,7 @@ def print_dividend_section(stocks: list[dict]) -> None:
         name   = s["name"][:25].ljust(26)
         print(
             f"{i:<3} {ai_tag} {name:<26} {s['ticker']:<8} "
-            f"{fmt_price(s['price']):>9} {fmt_div(s['div_yield']):>10} "
+            f"{fmt_price(s['price']):>9} {s.get('price_label','—'):>5} {fmt_div(s['div_yield']):>10} "
             f"{s['rsi']:>5.1f} {fmt_pe(s['pe']):>7} "
             f"{fmt_pct(s['ret5']):>6} {fmt_pct(s['ret20']):>6}  "
             f"{fmt_pct(s['drawdown']):>9}  {s['fetched_at']:<20}"
@@ -354,7 +362,7 @@ def print_dividend_section(stocks: list[dict]) -> None:
         ai_tag = " [AI]" if s["is_ai"] else ""
         growth = ("Growing" if s["ret20"] > 5 else "Stable" if s["ret20"] > 0 else "Under pressure")
         print(f"\n  {i}. {s['name']}{ai_tag} ({s['ticker']})  |  {s['sector']}  |  Cap: {s['mkt_cap']}  |  Trend: {growth}")
-        print(f"     Price: {fmt_price(s['price'])}  Div: {fmt_div(s['div_yield'])}  P/E: {fmt_pe(s['pe'])}  RSI: {s['rsi']:.1f}")
+        print(f"     Price: {fmt_price(s['price'])} [{s.get('price_label','—')}]  Div: {fmt_div(s['div_yield'])}  P/E: {fmt_pe(s['pe'])}  RSI: {s['rsi']:.1f}")
         print(f"     5d: {fmt_pct(s['ret5'])}  20d: {fmt_pct(s['ret20'])}  Drawdown: {fmt_pct(s['drawdown'])}")
         print(f"     EMA20: {fmt_price(s['ema20'])} {a20}  |  EMA50: {fmt_price(s['ema50'])} {a50}")
         print(f"     Support: {fmt_price(s['support'])}  Resistance: {fmt_price(s['resistance'])}")

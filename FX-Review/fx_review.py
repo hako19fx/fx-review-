@@ -41,10 +41,15 @@ def carry_positive(pair_name: str, bias: str) -> tuple[bool, float]:
     return diff > 0, diff
 
 
-def fetch_data(ticker: str) -> tuple[pd.DataFrame, str]:
+def fetch_data(ticker: str) -> tuple[pd.DataFrame, str, float | None]:
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M JST")
     df = yf.download(ticker, period="60d", interval="1d", progress=False, auto_adjust=True)
-    return df, fetched_at
+    try:
+        live = float(yf.Ticker(ticker).fast_info.last_price)
+        live_price = live if live and live > 0 else None
+    except Exception:
+        live_price = None
+    return df, fetched_at, live_price
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -56,7 +61,7 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
 
 
 def analyze(pair_name: str, ticker: str) -> dict | None:
-    df, fetched_at = fetch_data(ticker)
+    df, fetched_at, live_price = fetch_data(ticker)
     if df.empty or len(df) < 20:
         return None
 
@@ -68,7 +73,8 @@ def analyze(pair_name: str, ticker: str) -> dict | None:
     ema50 = close.ewm(span=50, adjust=False).mean()
     rsi = compute_rsi(close)
 
-    current = float(close.iloc[-1])
+    current = live_price if live_price else float(close.iloc[-1])
+    price_label = "LIVE" if live_price else "CLOSE"
     rsi_val = float(rsi.iloc[-1])
     ema20_val = float(ema20.iloc[-1])
     ema50_val = float(ema50.iloc[-1])
@@ -122,7 +128,8 @@ def analyze(pair_name: str, ticker: str) -> dict | None:
         "decimals": decimals,
         "carry_positive": is_positive,
         "carry_diff": carry_diff,
-        "fetched_at": fetched_at,
+        "fetched_at":   fetched_at,
+        "price_label":  price_label,
     }
 
 
@@ -138,8 +145,8 @@ def print_report(results: list[dict]) -> None:
     print(f"{'='*96}")
 
     # Actionable summary table
-    print(f"\n{'Pair':<10} {'Price':<10} {'Bias':<8} {'RSI':>5}  {'Carry':>7}  {'Entry Zone':<20} {'Target':<10} {'Stop':<10} {'Data Pulled (JST)':<20}")
-    print("-" * 96)
+    print(f"\n{'Pair':<10} {'Price':<10} {'Px':>5} {'Bias':<8} {'RSI':>5}  {'Carry':>7}  {'Entry Zone':<20} {'Target':<10} {'Stop':<10} {'Data Pulled (JST)':<20}")
+    print("-" * 102)
 
     if actionable:
         for r in actionable:
@@ -147,7 +154,7 @@ def print_report(results: list[dict]) -> None:
             price_str = f"{r['price']:.{d}f}"
             rsi_str = f"{r['rsi']:.1f}"
             carry_str = f"+{r['carry_diff']:.2f}%"
-            print(f"{r['pair']:<10} {price_str:<10} {r['bias']:<8} {rsi_str:>5}  {carry_str:>7}  {r['entry']:<20} {r['target']:<10} {r['stop']:<10} {r['fetched_at']:<20}")
+            print(f"{r['pair']:<10} {price_str:<10} {r.get('price_label','—'):>5} {r['bias']:<8} {rsi_str:>5}  {carry_str:>7}  {r['entry']:<20} {r['target']:<10} {r['stop']:<10} {r['fetched_at']:<20}")
     else:
         print("  No trades with positive carry today.")
 
